@@ -1,0 +1,237 @@
+---
+title: "Machine Learning Project"
+author: "treepruner"
+date: "October 9, 2015"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Project Description
+Sensors were placed on the belt, forearm, arm and dumbell of 6 participants. These sensors detected the acceleration, gyroscope and magnetometer data at a joint sampling rate of 45 Hz. The participants were then asked to lift a barbell 5 different ways: 
+ * Class A exactly according to the specification 
+ * Class B throwing the elbows to the front
+ * Class C lifting the dumbbell only halfway 
+ * Class D lowering the dumbbell only halfway 
+ * Class E throwing the hips to the front 
+ 
+Our task is to develop a model with only the accelerometer readings to identify which class method was used to lift
+the dumbell. 
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. 
+
+### Executive Summary
+The rpart method produced a model with an accuracy of XXX. The most useful variables proved to be  
+
+#### Load Packages 
+```{r, echo = FALSE, message=FALSE}
+library(dplyr)
+library(grid)
+library(gridExtra)
+library(caret)
+library(rattle)
+library(party)
+library(partykit)
+library(doParallel)
+```
+
+#### Download Data
+```{r}
+#if (!file.exists("project")) { dir.create("project")} 
+#setwd("./project")
+
+#setInternet2(use = TRUE)
+#trainURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+#download.file(trainURL, "pml_training.csv", method = "auto")
+
+#testURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+#download.file(testURL, "pml_testing.csv", method = "auto")
+```
+
+#### Load Training Data Set and Check Control Totals
+Control Totals per Forum:
+|    A|    B|    C|    D|    E| 
+|=====||=====||=====||=====||=====|
+| 5580| 3797| 3422| 3216| 3607| 
+
+My Training Totals:
+```{r }
+pml_training <- read.csv("pml_training.csv", na.strings = c("#DIV/0!", "NA"))
+table(pml_training$classe)
+```
+
+
+
+##### Subset for classe and _X, _Y, _Z Variables Only
+
+Exclude username, timestamps, windows and classe variables
+Exclude all the variables calculated from the original sensor measurements identified with variable names containing accel, gyros, magnet and _x, _y or _z.
+
+
+```{r }
+xyz <- select(pml_training, classe, contains("_x"), contains("_y"), contains( "_z"), -contains("stddev"), -contains("kurtosis"), -contains("max"), -contains("min"), -contains("yaw") )
+
+```
+
+#### Explore _xyz Data with Correlations
+
+```{r}
+corXYZ <- abs(cor(xyz[, -1]))
+diag(corXYZ) <- 0
+corXYZ <- which(corXYZ > 0.8, arr.ind = T)
+corXYZ[order(rownames(corXYZ)), ] 
+```
+
+#### Combine Highly Correlated Variables
+
+```{r}
+xyz$accel_belt_xy <- xyz$accel_belt_x + xyz$accel_belt_y
+xyz$gyros_arm_xy <- xyz$gyros_arm_x  + xyz$gyros_arm_y 
+xyz$gyros_dumbbell_xz <- xyz$gyros_dumbbell_x + xyz$gyros_dumbbell_z
+xyz$gyros_forearm_yz <- xyz$gyros_forearm_y + xyz$gyros_forearm_z
+xyz$magnet_arm_xyz <- xyz$magnet_arm_x + xyz$magnet_arm_y + xyz$magnet_arm_z
+xyz$accelMagnet_belt_x <- xyz$accel_belt_x + xyz$magnet_belt_x
+```
+
+#### Remove Highly Correlated Variables
+
+```{r}
+xyz <- select(xyz, 
+              -accel_belt_x, -accel_belt_y,
+              -gyros_arm_x, -gyros_arm_y,
+              -gyros_dumbbell_x, -gyros_dumbbell_z,
+              -gyros_forearm_y, -gyros_forearm_z,
+              -magnet_arm_x, -magnet_arm_y, -magnet_arm_z,
+              -accel_belt_x,-magnet_belt_x)
+```
+
+
+### Create _xyz Training and Validation Set
+
+I used the recommended value of .6 to create a training set which leaves 40% for a validation set in order to calculate an out of sample error rate.
+```{r }
+set.seed(1138)
+inTrain_xyz <- createDataPartition(y = xyz$classe, p = 0.6, list = FALSE)
+training_xyz <- xyz[inTrain_xyz,]
+validation_xyz <- xyz[-inTrain_xyz,]
+```
+
+
+\pagebreak
+### Explore _xyz Acceleration Variables Graphically
+
+
+```{r, fig.width = 6, fig.height=2, echo = FALSE }
+xAccelMagnetBelt <- qplot(accelMagnet_belt_x, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
+xAccelArm <- qplot(accel_arm_x, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
+xAccelForearm <- qplot(accel_forearm_x, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
+xAccelDumbbell <- qplot(accel_dumbbell_x, colour = classe, classe,  data = training_xyz) + guides(colour = FALSE)
+grid.arrange(xAccelMagnetBelt, xAccelArm, xAccelForearm, xAccelDumbbell, ncol = 4)
+
+xyAccelBelt <- qplot(accel_belt_xy, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
+yAccelArm <- qplot(accel_arm_y, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
+yAccelForearm <- qplot(accel_forearm_y, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
+yAccelDumbbell <- qplot(accel_dumbbell_y, colour = classe, classe,  data = training_xyz) + guides(colour = FALSE)
+grid.arrange(xyAccelBelt, yAccelArm, yAccelForearm, yAccelDumbbell, ncol = 4)
+
+zAccelBelt <- qplot(accel_belt_z, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
+zAccelArm <- qplot(accel_arm_z, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
+zAccelForearm <- qplot(accel_forearm_z, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
+zAccelDumbbell <- qplot(accel_dumbbell_z, colour = classe, classe,  data = training_xyz) + guides(colour = FALSE)
+grid.arrange(zAccelBelt, zAccelArm, zAccelForearm, zAccelDumbbell, ncol = 4)
+```
+\pagebreak
+
+### Explore _xyz Gyroscope Variables Graphically
+
+```{r, fig.width = 6, fig.height=2, echo = FALSE  }
+xgyrosBelt <- qplot(gyros_belt_x, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
+xygyrosArm <- qplot(gyros_arm_xy, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
+xgyrosForearm <- qplot(gyros_forearm_x, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
+xzgyrosDumbbell <- qplot(gyros_dumbbell_xz, colour = classe, classe,  data = training_xyz) + guides(colour = FALSE)
+grid.arrange(xgyrosBelt, xygyrosArm, xgyrosForearm, xzgyrosDumbbell, ncol = 4)
+
+ygyrosBelt <- qplot(gyros_belt_y, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
+xygyrosArm <- qplot(gyros_arm_xy, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
+yzgyrosForearm <- qplot(gyros_forearm_yz, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
+ygyrosDumbbell <- qplot(gyros_dumbbell_y, colour = classe, classe,  data = training_xyz) + guides(colour = FALSE)
+grid.arrange(ygyrosBelt, xygyrosArm, yzgyrosForearm, ygyrosDumbbell, ncol = 4)
+
+zgyrosBelt <- qplot(gyros_belt_z, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
+zgyrosArm <- qplot(gyros_arm_z, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
+yzgyrosForearm <- qplot(gyros_forearm_yz, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
+xzgyrosDumbbell <- qplot(gyros_dumbbell_xz, colour = classe, classe,  data = training_xyz) + guides(colour = FALSE)
+grid.arrange(zgyrosBelt, zgyrosArm, yzgyrosForearm, xzgyrosDumbbell, ncol = 4)
+```
+
+\pagebreak
+### Explore _xyz Magnetometer Variables Graphically
+
+```{r, fig.width = 6, fig.height=2, echo = FALSE  }
+xaccelMagnetBelt <- qplot(accelMagnet_belt_x, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
+xyzmagnetArm <- qplot(magnet_arm_xyz, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
+xmagnetForearm <- qplot(magnet_forearm_x, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
+xmagnetDumbbell <- qplot(magnet_dumbbell_x, colour = classe, classe,  data = training_xyz) + guides(colour = FALSE)
+grid.arrange(xaccelMagnetBelt, xyzmagnetArm, xmagnetForearm, xmagnetDumbbell, ncol = 4)
+
+ymagnetBelt <- qplot(magnet_belt_y, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
+xyzmagnetArm <- qplot(magnet_arm_xyz, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
+xmagnetForearm <- qplot(magnet_forearm_x, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
+ymagnetDumbbell <- qplot(magnet_dumbbell_y, colour = classe, classe,  data = training_xyz) + guides(colour = FALSE)
+grid.arrange(ymagnetBelt, xyzmagnetArm, xmagnetForearm, ymagnetDumbbell, ncol = 4)
+
+zmagnetBelt <- qplot(magnet_belt_z, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
+xyzmagnetArm <- qplot(magnet_arm_xyz, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
+zmagnetForearm <- qplot(magnet_forearm_z, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
+zmagnetDumbbell <- qplot(magnet_dumbbell_z, colour = classe, classe,  data = training_xyz) + guides(colour = FALSE)
+grid.arrange(zmagnetBelt, xyzmagnetArm, zmagnetForearm, zmagnetDumbbell, ncol = 4)
+```
+
+
+
+### Run rpart xyz 
+
+```{r}
+trCtrl <- trainControl(method="repeatedcv",             
+                     repeats=5,                          
+                     classProbs=TRUE) # accuracy : 0.4842
+
+set.seed(1138)
+registerDoParallel(4)       
+getDoParWorkers()
+
+xyzFit <- train(classe ~., data = training_xyz,
+             method = "rpart",
+             control = rpart.control(minsplit = 2),
+             trControl = trCtrl,
+             tuneLength = 5)
+varImp(xyzFit, compete= FALSE)
+```
+
+
+```{r, fig.width = 3, fig.height=3 }
+dotPlot(varImp(xyzFit, compete= FALSE))
+```
+
+```{r, fig.width = 8, fig.height=6 }
+fancyRpartPlot(xyzFit$finalModel, sub="")
+```
+
+
+#### Compare with Valadation xyz
+```{r}
+xyzFitPred <- predict(xyzFit, newdata = validation_xyz) 
+confusionMatrix(xyzFitPred, validation_xyz$classe)
+```
+
+
+### Load Testing Data Set
+```{r }
+pml_testing <- read.csv("pml_testing.csv", 
+                        na.strings = c("#DIV/0!", "NA"))
+dim(pml_testing)
+
+```
+
