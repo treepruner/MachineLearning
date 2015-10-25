@@ -1,8 +1,8 @@
 ---
 title: "Machine Learning Project"
 author: "treepruner"
-date: "October 9, 2015"
-output: pdf_document
+date: "October 25, 2015"
+output: html_document
 ---
 
 ```{r setup, include=FALSE}
@@ -11,22 +11,35 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ### Project Description
 Sensors were placed on the belt, forearm, arm and dumbell of 6 participants. These sensors detected the acceleration, gyroscope and magnetometer data at a joint sampling rate of 45 Hz. The participants were then asked to lift a barbell 5 different ways: 
- * Class A exactly according to the specification 
- * Class B throwing the elbows to the front
- * Class C lifting the dumbbell only halfway 
- * Class D lowering the dumbbell only halfway 
- * Class E throwing the hips to the front 
+
+*   Class A exactly according to the specification 
+*   Class B throwing the elbows to the front
+*   Class C lifting the dumbbell only halfway 
+*   Class D lowering the dumbbell only halfway 
+*   Class E throwing the hips to the front 
  
 Our task is to develop a model with only the accelerometer readings to identify which class method was used to lift
-the dumbell. 
+the dumbell. I have interpreted this to mean all the original sensor readings. 
 
 The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. 
 
 ### Executive Summary
-The rpart method produced a model with an accuracy of XXX. The most useful variables proved to be  
+The overall accuracy when used against the validation data set was 0.557 with a Kappa of 0.4376. The model successfully predicted only 7 out of 20 test cases. The most useful variables for classification in this model proved to be:
+
+*   accel_belt_z       100.00
+*   magnet_dumbbell_y   92.76
+*   accel_dumbbell_y    67.36
+*   accel_arm_x         53.55
+*   magnet_dumbbell_z   48.67
+*   accel_dumbbell_z    27.81
+*   accel_forearm_x     23.25
+
+The sensitivity, which is the TP / (TP + FN) for detecting Class A is 0.7186. The specificity, which is TN / (FN + TN), for Class A is .8254.  
+
+This model needs improvement.
 
 #### Load Packages 
-```{r, echo = FALSE, message=FALSE}
+```{r, message=FALSE}
 library(dplyr)
 library(grid)
 library(gridExtra)
@@ -35,27 +48,34 @@ library(rattle)
 library(party)
 library(partykit)
 library(doParallel)
+library(pander)
 ```
 
+### Get and Clean Data
+
+
 #### Download Data
+
 ```{r}
-#if (!file.exists("project")) { dir.create("project")} 
-#setwd("./project")
+setInternet2(use = TRUE)
+trainURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+download.file(trainURL, "pml_training.csv", method = "auto")
 
-#setInternet2(use = TRUE)
-#trainURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
-#download.file(trainURL, "pml_training.csv", method = "auto")
-
-#testURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
-#download.file(testURL, "pml_testing.csv", method = "auto")
+testURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(testURL, "pml_testing.csv", method = "auto")
 ```
 
 #### Load Training Data Set and Check Control Totals
 Control Totals per Forum:
-|    A|    B|    C|    D|    E| 
-|=====||=====||=====||=====||=====|
-| 5580| 3797| 3422| 3216| 3607| 
 
+
+   A     B     C     D     E  
+ ----- ----- ----- ----- -----
+ 5580  3797  3422  3216  3607  
+ ----- ----- ----- ----- ----- 
+ 
+
+        
 My Training Totals:
 ```{r }
 pml_training <- read.csv("pml_training.csv", na.strings = c("#DIV/0!", "NA"))
@@ -64,9 +84,9 @@ table(pml_training$classe)
 
 
 
-##### Subset for classe and _X, _Y, _Z Variables Only
+#### Subset for classe and _X, _Y, _Z Variables Only
 
-Exclude username, timestamps, windows and classe variables
+Exclude username, timestamps, windows variables
 Exclude all the variables calculated from the original sensor measurements identified with variable names containing accel, gyros, magnet and _x, _y or _z.
 
 
@@ -120,10 +140,12 @@ validation_xyz <- xyz[-inTrain_xyz,]
 
 
 \pagebreak
+
 ### Explore _xyz Acceleration Variables Graphically
 
 
-```{r, fig.width = 6, fig.height=2, echo = FALSE }
+
+```{r, fig.width = 8, fig.height=2, echo = FALSE }
 xAccelMagnetBelt <- qplot(accelMagnet_belt_x, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
 xAccelArm <- qplot(accel_arm_x, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
 xAccelForearm <- qplot(accel_forearm_x, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
@@ -146,7 +168,7 @@ grid.arrange(zAccelBelt, zAccelArm, zAccelForearm, zAccelDumbbell, ncol = 4)
 
 ### Explore _xyz Gyroscope Variables Graphically
 
-```{r, fig.width = 6, fig.height=2, echo = FALSE  }
+```{r, fig.width = 8, fig.height=2, echo = FALSE  }
 xgyrosBelt <- qplot(gyros_belt_x, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
 xygyrosArm <- qplot(gyros_arm_xy, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
 xgyrosForearm <- qplot(gyros_forearm_x, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
@@ -166,10 +188,13 @@ xzgyrosDumbbell <- qplot(gyros_dumbbell_xz, colour = classe, classe,  data = tra
 grid.arrange(zgyrosBelt, zgyrosArm, yzgyrosForearm, xzgyrosDumbbell, ncol = 4)
 ```
 
+Classe A is the correct lifting method and there appear to be some outliers in forearm and dumbbell measurements. These points may lead to overfitting problems.
+
 \pagebreak
+
 ### Explore _xyz Magnetometer Variables Graphically
 
-```{r, fig.width = 6, fig.height=2, echo = FALSE  }
+```{r, fig.width = 8, fig.height=2, echo = FALSE  }
 xaccelMagnetBelt <- qplot(accelMagnet_belt_x, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
 xyzmagnetArm <- qplot(magnet_arm_xyz, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
 xmagnetForearm <- qplot(magnet_forearm_x, colour = classe, classe, data = training_xyz) + guides(colour = FALSE)
@@ -189,24 +214,24 @@ zmagnetDumbbell <- qplot(magnet_dumbbell_z, colour = classe, classe,  data = tra
 grid.arrange(zmagnetBelt, xyzmagnetArm, zmagnetForearm, zmagnetDumbbell, ncol = 4)
 ```
 
+I did not find any of the graph panels to be helpful.
 
-
-### Run rpart xyz 
+### Run rpart 
 
 ```{r}
 trCtrl <- trainControl(method="repeatedcv",             
-                     repeats=5,                          
-                     classProbs=TRUE) # accuracy : 0.4842
+                       repeats=5,                                                classProbs=TRUE) 
 
 set.seed(1138)
 registerDoParallel(4)       
 getDoParWorkers()
 
 xyzFit <- train(classe ~., data = training_xyz,
-             method = "rpart",
-             control = rpart.control(minsplit = 2),
-             trControl = trCtrl,
-             tuneLength = 5)
+          method = "rpart",
+          control = rpart.control(minsplit = 2),
+          trControl = trCtrl,
+          tuneLength = 5)
+
 varImp(xyzFit, compete= FALSE)
 ```
 
@@ -219,19 +244,75 @@ dotPlot(varImp(xyzFit, compete= FALSE))
 fancyRpartPlot(xyzFit$finalModel, sub="")
 ```
 
+#### Compare Prediction with Training Data Set
 
-#### Compare with Valadation xyz
 ```{r}
-xyzFitPred <- predict(xyzFit, newdata = validation_xyz) 
-confusionMatrix(xyzFitPred, validation_xyz$classe)
+xyzFitTrainPred <- predict(xyzFit, newdata = training_xyz) 
+confusionMatrix(xyzFitTrainPred, training_xyz$classe)
+```
+
+      
+
+
+#### Compare Prediction with Valadation Data Set
+
+```{r}
+xyzFitValPred <- predict(xyzFit, newdata = validation_xyz) 
+confusionMatrix(xyzFitValPred, validation_xyz$classe)
+```
+
+     
+
+#### Out of Sample Error
+
+The validation set was held out inorder to be a reasonable estimate of how the model would behaving on the testing data. The allows an out of sample error rate to be calculated. Generally the accuracy will be lower on the validation set than it is on the training set, however, my model performs slightly better on the validation data set. The Kappa statistic takes into account the expected error rate  and is the (Observed accuracy - Expected accuracy) / (1 - Expected Accuracy)
+
+
+
+Training Accurancy          Training Kappa   Validation  Accuracy     Validation  Kappa    
+--------------------------  ---------------  ------------------------ -----------------
+0.5439 (0.5349, 0.5529)     0.4209          0.557   (0.5459, 0.568)  0.4376 
+
+```{r, fig.width = 8, fig.height=6 }
+
 ```
 
 
-### Load Testing Data Set
+### Load Testing Data Set and Adjust to Match Training Data
 ```{r }
 pml_testing <- read.csv("pml_testing.csv", 
                         na.strings = c("#DIV/0!", "NA"))
-dim(pml_testing)
+```
 
+```{r }
+testing <- select(pml_testing, contains("_x"), contains("_y"), contains( "_z"), -contains("stddev"), -contains("kurtosis"), -contains("max"), -contains("min"), -contains("yaw") )
+
+```
+
+```{r}
+testing$accel_belt_xy <- testing$accel_belt_x + testing$accel_belt_y
+testing$gyros_arm_xy <- testing$gyros_arm_x  + testing$gyros_arm_y 
+testing$gyros_dumbbell_xz <- testing$gyros_dumbbell_x + testing$gyros_dumbbell_z
+testing$gyros_forearm_yz <- testing$gyros_forearm_y + testing$gyros_forearm_z
+testing$magnet_arm_xyz <- testing$magnet_arm_x + testing$magnet_arm_y + testing$magnet_arm_z
+testing$accelMagnet_belt_x <- testing$accel_belt_x + testing$magnet_belt_x
+```
+
+
+```{r}
+testing <- select(testing, 
+              -accel_belt_x, -accel_belt_y,
+              -gyros_arm_x, -gyros_arm_y,
+              -gyros_dumbbell_x, -gyros_dumbbell_z,
+              -gyros_forearm_y, -gyros_forearm_z,
+              -magnet_arm_x, -magnet_arm_y, -magnet_arm_z,
+              -accel_belt_x,-magnet_belt_x)
+```
+
+#### Predict Testing Data Set
+
+```{r}
+testingPred <- predict(xyzFit, newdata = testing) 
+testingPred
 ```
 
